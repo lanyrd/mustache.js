@@ -40,12 +40,8 @@ var Mustache = (typeof module !== "undefined" && module.exports) || {};
 
   // Workaround for https://issues.apache.org/jira/browse/COUCHDB-577
   // See https://github.com/janl/mustache.js/issues/189
-  function testRe(re, string) {
-    return RegExp.prototype.test.call(re, string);
-  }
-
   function isWhitespace(string) {
-    return !testRe(nonSpaceRe, string);
+    return RegExp.prototype.test.call(nonSpaceRe, string);
   }
 
   var isArray = Array.isArray || function (obj) {
@@ -54,13 +50,19 @@ var Mustache = (typeof module !== "undefined" && module.exports) || {};
 
   // OSWASP Guidlines: escape all non alphanumeric characters in ASCII space.
   var jsCharsRe = /[\x00-\x2F\x3A-\x40\x5B-\x60\x7B-\xFF\u2028\u2029]/gm;
+  var quote;
 
-  function quote(text) {
-    var escaped = text.replace(jsCharsRe, function (c) {
-      return "\\u" + ('0000' + c.charCodeAt(0).toString(16)).slice(-4);
-    });
+  if (JSON.stringify) {
+    quote = JSON.stringify;
+  }
+  else {
+    quote = function(text) {
+      var escaped = text.replace(jsCharsRe, function (c) {
+        return "\\u" + ('0000' + c.charCodeAt(0).toString(16)).slice(-4);
+      });
 
-    return '"' + escaped + '"';
+      return '"' + escaped + '"';
+    };
   }
 
   function escapeRe(string) {
@@ -176,7 +178,7 @@ var Mustache = (typeof module !== "undefined" && module.exports) || {};
           if (name.indexOf(".") > 0) {
             var names = name.split("."), i = 0, len = names.length;
 
-            value = context.view;
+            value = this.lookup(names[0]);
 
             while (value && i < len) {
               valueFound = names[i++] in value;
@@ -429,25 +431,6 @@ var Mustache = (typeof module !== "undefined" && module.exports) || {};
   }
 
   /**
-   * Combines the values of consecutive text tokens in the given `tokens` array
-   * to a single token.
-   */
-  function squashTokens(tokens) {
-    var lastToken;
-
-    for (var i = 0; i < tokens.length; ++i) {
-      var token = tokens[i];
-
-      if (lastToken && lastToken.type === "text" && token.type === "text") {
-        lastToken.value += token.value;
-        tokens.splice(i--, 1); // Remove this token from the array.
-      } else {
-        lastToken = token;
-      }
-    }
-  }
-
-  /**
    * Breaks up the given `template` string into a tree of token objects. If
    * `tags` is given here it must be an array with two string values: the
    * opening and closing tags used in the template (e.g. ["<%", "%>"]). Of
@@ -462,43 +445,30 @@ var Mustache = (typeof module !== "undefined" && module.exports) || {};
     var tokens = [],      // Buffer to hold the tokens
         spaces = [],      // Indices of whitespace tokens on the current line
         hasTag = false,   // Is there a {{tag}} on the current line?
-        nonSpace = false; // Is there a non-space char on the current line?
+        nonSpace = false, // Is there a non-space char on the current line?
+        lastToken; // For combining text tokens
 
-    // Strips all whitespace tokens array for the current line
-    // if there was a {{#tag}} on it and otherwise only space.
-    var stripSpace = function () {
-      if (hasTag && !nonSpace) {
-        while (spaces.length) {
-          tokens.splice(spaces.pop(), 1);
-        }
-      } else {
-        spaces = [];
-      }
-
-      hasTag = false;
-      nonSpace = false;
-    };
-
-    var type, value, chr;
+    var type, value, line, lines, lastTokenType;
 
     while (!scanner.eos()) {
       value = scanner.scanUntil(tagRes[0]);
 
       if (value) {
-        for (var i = 0, len = value.length; i < len; ++i) {
-          chr = value[i];
+        lines = value.split('\n');
+        lastTokenType = lastToken && lastToken.type;
 
-          if (isWhitespace(chr)) {
-            spaces.push(tokens.length);
-          } else {
-            nonSpace = true;
+        for (var i = 0, len = lines.length; i < len; ++i) {
+          line = lines[i];
+          
+          if (!i && !(lastTokenType === "name" || lastTokenType === "{" || lastTokenType === "&") && /^\s*$/.test(line) ) {
+            continue;
+          }
+          if (i != len - 1) {
+            line += '\n';
           }
 
-          tokens.push({type: "text", value: chr});
-
-          if (chr === "\n") {
-            stripSpace(); // Check for whitespace on the current line.
-          }
+          lastToken = {type: "text", value: line};
+          tokens.push(lastToken);
         }
       }
 
@@ -531,12 +501,12 @@ var Mustache = (typeof module !== "undefined" && module.exports) || {};
       if (!scanner.scan(tagRes[1])) {
         throw new Error("Unclosed tag at " + scanner.pos);
       }
-
-      tokens.push({type: type, value: value});
-
-      if (type === "name" || type === "{" || type === "&") {
-        nonSpace = true;
+      if ( !(type === "name" || type === "{" || type === "&") && lastToken && lastToken.type === 'text' && /^\s*$/.test(lastToken.value) ) {
+        tokens.pop();
       }
+      lastToken = {type: type, value: value};
+      tokens.push(lastToken);
+
 
       // Set the tags for the next time around.
       if (type === "=") {
@@ -544,8 +514,6 @@ var Mustache = (typeof module !== "undefined" && module.exports) || {};
         tagRes = escapeTags(tags);
       }
     }
-
-    squashTokens(tokens);
 
     return nestTokens(tokens);
   }
