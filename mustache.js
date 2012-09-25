@@ -145,6 +145,7 @@ var Mustache;
 
   Context.prototype.lookup = function (name) {
     var value = this._cache[name];
+    var valueFound;
 
     if (!value) {
       if (name === ".") {
@@ -157,15 +158,17 @@ var Mustache;
             var names = name.split("."), i = 0;
 
             value = context.view;
+            valueFound = context.view.hasOwnProperty(name[0]);
 
             while (value && i < names.length) {
               value = value[names[i++]];
             }
           } else {
+            valueFound = context.view.hasOwnProperty(name);
             value = context.view[name];
           }
 
-          if (value != null) {
+          if (valueFound) {
             break;
           }
 
