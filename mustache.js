@@ -37,11 +37,10 @@ var Mustache;
   // Workaround for https://issues.apache.org/jira/browse/COUCHDB-577
   // See https://github.com/janl/mustache.js/issues/189
   function testRe(re, string) {
-    return RegExp.prototype.test.call(re, string);
   }
 
   function isWhitespace(string) {
-    return !testRe(nonSpaceRe, string);
+    return !RegExp.prototype.test.call(nonSpaceRe, string);
   }
 
   var isArray = Array.isArray || function (obj) {
@@ -427,26 +426,6 @@ var Mustache;
     return tree;
   }
 
-  /**
-   * Combines the values of consecutive text tokens in the given `tokens` array
-   * to a single token.
-   */
-  function squashTokens(tokens) {
-    var token, lastToken;
-
-    for (var i = 0; i < tokens.length; ++i) {
-      token = tokens[i];
-
-      if (lastToken && lastToken[0] === "text" && token[0] === "text") {
-        lastToken[1] += token[1];
-        lastToken[3] = token[3];
-        tokens.splice(i--, 1); // Remove this token from the array.
-      } else {
-        lastToken = token;
-      }
-    }
-  }
-
   function escapeTags(tags) {
     if (tags.length !== 2) {
       throw new Error("Invalid tags: " + tags.join(" "));
@@ -467,7 +446,16 @@ var Mustache;
   exports.parse = function (template, tags) {
     tags = tags || exports.tags;
 
+
     var tagRes = escapeTags(tags);
+
+    // Strips all whitespace tokens array for the current line
+    // if there was a {{#tag}} on it and otherwise only space.
+    template = template.replace(
+      new RegExp( '(^|\n)\\s*(' + escapeRe(tags[0]) + "\\s*[#^\/].*?" + escapeRe(tags[1]) + ')\\s*(?:$|\n)', "g" ),
+      "$1$2"
+    );
+
     var scanner = new Scanner(template);
 
     var tokens = [],      // Buffer to hold the tokens
@@ -475,20 +463,6 @@ var Mustache;
         hasTag = false,   // Is there a {{tag}} on the current line?
         nonSpace = false; // Is there a non-space char on the current line?
 
-    // Strips all whitespace tokens array for the current line
-    // if there was a {{#tag}} on it and otherwise only space.
-    function stripSpace() {
-      if (hasTag && !nonSpace) {
-        while (spaces.length) {
-          tokens.splice(spaces.pop(), 1);
-        }
-      } else {
-        spaces = [];
-      }
-
-      hasTag = false;
-      nonSpace = false;
-    }
 
     var start, type, value, chr;
 
@@ -497,22 +471,7 @@ var Mustache;
       value = scanner.scanUntil(tagRes[0]);
 
       if (value) {
-        for (var i = 0, len = value.length; i < len; ++i) {
-          chr = value.charAt(i);
-
-          if (isWhitespace(chr)) {
-            spaces.push(tokens.length);
-          } else {
-            nonSpace = true;
-          }
-
-          tokens.push(["text", chr, start, start + 1]);
-          start += 1;
-
-          if (chr === "\n") {
-            stripSpace(); // Check for whitespace on the current line.
-          }
-        }
+        tokens.push(["text", value, start, start + value.length]);
       }
 
       start = scanner.pos;
@@ -560,8 +519,6 @@ var Mustache;
         tagRes = escapeTags(tags);
       }
     }
-
-    squashTokens(tokens);
 
     return nestTokens(tokens);
   };
